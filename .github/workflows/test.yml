@@ -100,18 +100,26 @@ jobs:
       # The address the collector is given has to be one that answers, not
       # merely one that parses. A Service with no ready endpoints refuses the
       # connection, which reads as a wrong address and is not one.
+      # Asking the address, from inside the cluster, is the whole check. An
+      # earlier version also asserted the Service had entries in the legacy
+      # v1 Endpoints object; that is mirrored from EndpointSlice by a separate
+      # controller and lags it, so it failed while OpenCost was serving
+      # perfectly well. The probe cannot lie in that direction.
+      #
+      # Created and waited for rather than run with `-i`, because attaching to
+      # a pod's stream races the image pull in CI.
       - name: That address actually serves OpenCost
         run: |
-          kubectl -n xplorr get endpoints opencost -o jsonpath='{.subsets[*].addresses[*].ip}' | grep -q .
-          # Created and waited for rather than run with `-i`: attaching to a
-          # pod's stream needs the pod to be running by the time kubectl
-          # attaches, and in CI the image pull makes that a race the test
-          # loses rather than the chart.
           kubectl -n xplorr run probe --restart=Never --image=curlimages/curl:8.22.0 --command -- \
-            curl -sS --fail --max-time 30 --retry 5 --retry-delay 5 --retry-connrefused \
+            curl -sS --fail --max-time 30 --retry 10 --retry-delay 5 --retry-connrefused \
             -o /dev/null http://opencost.xplorr.svc.cluster.local:9003/healthz
-          kubectl -n xplorr wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=3m \
-            || { kubectl -n xplorr describe pod probe; kubectl -n xplorr logs probe; exit 1; }
+          kubectl -n xplorr wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=3m || {
+            kubectl -n xplorr describe pod probe
+            kubectl -n xplorr logs probe || true
+            kubectl -n xplorr get endpointslice -l kubernetes.io/service-name=opencost -o wide
+            kubectl -n xplorr get pods -o wide
+            exit 1
+          }
 
       # The first run after an install races OpenCost coming up. It has to
       # wait rather than fail, because that is what a customer hits.
