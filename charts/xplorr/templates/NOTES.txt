@@ -1,27 +1,28 @@
 {{ .Values.clusterName }} is installed.
 
+{{ if .Values.installOpenCost -}}
+OpenCost was installed with this release, reporting as CLUSTER_ID
+"{{ .Values.clusterName }}". It takes a minute or so to come up. Wait for it
+before running anything, because a Service with no ready endpoints refuses
+the connection rather than waiting:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/opencost
+{{- else }}
+OpenCost was not installed by this release. The collector reads
+{{ include "xplorr.openCostUrl" . }}, and waits for it to answer before
+sending anything.
+{{- end }}
+
 The collector runs on the schedule {{ .Values.xplorr.schedule }} (UTC), so the
-first send is up to an hour away. Run it now instead:
+first send is otherwise up to an hour away. Run it now instead:
 
   kubectl -n {{ .Release.Namespace }} create job xplorr-first-run \
     --from=cronjob/{{ include "xplorr.fullname" . }}-collector
 
-  kubectl -n {{ .Release.Namespace }} logs job/xplorr-first-run
+  kubectl -n {{ .Release.Namespace }} logs -f job/xplorr-first-run
 
 A run that worked ends with "sent to Xplorr". The console then moves this
 cluster from "Waiting for collector" to "Receiving", which can take a minute.
-
-{{ if .Values.installOpenCost -}}
-OpenCost was installed with this release, reporting as CLUSTER_ID
-"{{ .Values.clusterName }}". Check it is up before reading anything into an
-empty first run:
-
-  kubectl -n {{ .Release.Namespace }} rollout status deploy/opencost
-{{- else -}}
-OpenCost was not installed by this release. The collector reads
-{{ include "xplorr.openCostUrl" . }}, so a first run that finds nothing there
-will say so in its logs.
-{{- end }}
 
 {{ if .Values.xplorr.ingestToken -}}
 The ingest token is in this release's values, which means it is in Helm's

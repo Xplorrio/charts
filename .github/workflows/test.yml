@@ -96,3 +96,24 @@ jobs:
         run: |
           kubectl -n xplorr get cronjob xplorr-collector -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[?(@.name=="OPENCOST_URL")].value}' \
             | grep -qx http://opencost.xplorr.svc.cluster.local:9003
+
+      # The address the collector is given has to be one that answers, not
+      # merely one that parses. A Service with no ready endpoints refuses the
+      # connection, which reads as a wrong address and is not one.
+      - name: That address actually serves OpenCost
+        run: |
+          kubectl -n xplorr get endpoints opencost -o jsonpath='{.subsets[*].addresses[*].ip}' | grep -q .
+          kubectl -n xplorr run probe --rm -i --restart=Never --image=curlimages/curl:8.22.0 -- \
+            curl -sS --fail --max-time 30 --retry 5 --retry-delay 5 --retry-connrefused \
+            -o /dev/null http://opencost.xplorr.svc.cluster.local:9003/healthz
+
+      # The first run after an install races OpenCost coming up. It has to
+      # wait rather than fail, because that is what a customer hits.
+      - name: A real collector run survives OpenCost still starting
+        run: |
+          kubectl -n xplorr create job first-run --from=cronjob/xplorr-collector
+          kubectl -n xplorr wait --for=condition=complete --timeout=5m job/first-run \
+            || { kubectl -n xplorr logs job/first-run; exit 1; }
+          # It reaches Xplorr and is refused there (the token is fake), which
+          # is proof it got past OpenCost. A connection error would not be.
+          kubectl -n xplorr logs job/first-run | grep -q 'collected'

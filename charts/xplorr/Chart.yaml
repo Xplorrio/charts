@@ -2,7 +2,7 @@ apiVersion: v2
 name: xplorr
 description: Sends Kubernetes cost data to Xplorr, installing OpenCost alongside it.
 type: application
-version: 0.0.2
+version: 0.0.3
 appVersion: "1.0.0"
 home: https://xplorr.io
 icon: https://xplorr.io/brand/xplorr-avatar-500.png

@@ -75,8 +75,26 @@ spec:
               args:
                 - |
                   set -eu
+                  # Wait for OpenCost to answer before asking it for anything.
+                  #
+                  # A Service with no ready endpoints refuses the connection
+                  # rather than hanging, so the first run after an install
+                  # would otherwise fail outright while OpenCost was still
+                  # starting. That looked like a wrong address and is not one.
+                  i=0
+                  until curl -sS --max-time 10 -o /dev/null "$OPENCOST_URL/healthz"; do
+                    i=$((i + 1))
+                    if [ "$i" -ge 30 ]; then
+                      echo "OpenCost at $OPENCOST_URL did not answer within five minutes."
+                      echo "Check it is running: kubectl get pods -l app.kubernetes.io/name=opencost"
+                      exit 1
+                    fi
+                    echo "waiting for OpenCost at $OPENCOST_URL ($i)"
+                    sleep 10
+                  done
+                  echo "OpenCost is answering"
                   # Ask OpenCost for daily allocations over the window, idle kept separate.
-                  curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                  curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
                     --get "$OPENCOST_URL/allocation" \
                     --data-urlencode "window=$COST_WINDOW" \
                     --data-urlencode "aggregate=namespace,controllerKind,controller,pod" \
@@ -87,7 +105,7 @@ spec:
                     -o /tmp/allocations.json
                   echo "collected $(wc -c < /tmp/allocations.json) bytes from OpenCost"
                   # Send it on unchanged. The token never reaches stdout.
-                  curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                  curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
                     -X POST "$XPLORR_INGEST_URL" \
                     -H "Authorization: Bearer $XPLORR_TOKEN" \
                     -H "Content-Type: application/json" \
@@ -106,11 +124,11 @@ spec:
                     else
                       stop_at=$(date -u -d "@$((start + 86400))" +%Y-%m-%dT00:00:00Z)
                     fi
-                    if curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                    if curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
                          --get "$OPENCOST_URL/assets" \
                          --data-urlencode "window=${day}T00:00:00Z,${stop_at}" \
                          -o /tmp/assets.json; then
-                      curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                      curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
                         -X POST "$XPLORR_INGEST_URL/assets?date=$day" \
                         -H "Authorization: Bearer $XPLORR_TOKEN" \
                         -H "Content-Type: application/json" \
