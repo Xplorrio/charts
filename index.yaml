@@ -5,6 +5,36 @@ entries:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
     appVersion: 1.0.0
+    created: "2026-09-22T13:09:24.690000693Z"
+    dependencies:
+    - condition: installOpenCost
+      name: opencost
+      repository: https://opencost.github.io/opencost-helm-chart
+      version: 2.5.32
+    description: Sends Kubernetes cost data to Xplorr, installing OpenCost alongside
+      it.
+    digest: 0d36b7a186951854a356fd29aa85a0ae12870b650ecd84b035e83d2ca5c6672a
+    home: https://xplorr.io
+    icon: https://xplorr.io/brand/xplorr-avatar-500.png
+    keywords:
+    - cost
+    - finops
+    - opencost
+    - kubernetes
+    maintainers:
+    - name: Xplorr
+      url: https://xplorr.io
+    name: xplorr
+    sources:
+    - https://github.com/Xplorrio/charts
+    type: application
+    urls:
+    - https://github.com/Xplorrio/charts/releases/download/xplorr-0.0.3/xplorr-0.0.3.tgz
+    version: 0.0.3
+  - annotations:
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
+    appVersion: 1.0.0
     created: "2026-09-22T11:11:25.134514564Z"
     dependencies:
     - condition: installOpenCost
@@ -61,4 +91,4 @@ entries:
     urls:
     - https://github.com/Xplorrio/charts/releases/download/xplorr-0.0.1/xplorr-0.0.1.tgz
     version: 0.0.1
-generated: "2026-09-22T11:11:25.134523481Z"
+generated: "2026-09-22T13:09:24.690009319Z"
