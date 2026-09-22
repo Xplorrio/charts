@@ -1,7 +1,7 @@
 # Xplorr Helm charts
 
 ```bash
-helm repo add xplorr https://xplorrio.github.io/charts
+helm repo add xplorr https://charts.xplorr.io
 helm repo update
 ```
 

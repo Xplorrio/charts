@@ -1,7 +1,12 @@
 name: Release chart
 
-# Publishes the chart to the Helm repository served from GitHub Pages, so that
-# `helm repo add xplorr https://xplorrio.github.io/charts` keeps working.
+# Publishes the chart to the Helm repository served from GitHub Pages at
+# charts.xplorr.io, so that `helm repo add xplorr https://charts.xplorr.io`
+# keeps working.
+#
+# The custom domain lives in the CNAME file on gh-pages. chart-releaser only
+# adds and updates index.yaml, so it leaves that alone, but anything that
+# rewrites the branch wholesale would take the domain down with it.
 #
 # chart-releaser only publishes a chart whose version in Chart.yaml is new, so
 # a commit that does not bump the version is a no-op rather than a failure.

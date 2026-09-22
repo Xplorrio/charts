@@ -3,7 +3,7 @@
 One command to send a cluster's cost to [Xplorr](https://xplorr.io).
 
 ```bash
-helm repo add xplorr https://xplorrio.github.io/charts
+helm repo add xplorr https://charts.xplorr.io
 helm repo update
 
 helm upgrade --install xplorr xplorr/xplorr \
