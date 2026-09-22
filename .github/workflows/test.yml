@@ -1,0 +1,98 @@
+name: Test chart
+
+# Every value combination the README offers has to render. The install path is
+# checked against a real cluster, because a chart that templates cleanly can
+# still be rejected by the API server.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.19.0
+
+      - run: helm repo add opencost https://opencost.github.io/opencost-helm-chart
+      - run: helm dependency update charts/xplorr
+
+      - name: Lint
+        run: |
+          helm lint charts/xplorr \
+            --set clusterName=ci \
+            --set xplorr.clusterId=11111111-1111-4111-8111-111111111111 \
+            --set xplorr.ingestToken=xpk8s_ci
+
+      - name: Render, with OpenCost
+        run: |
+          helm template xplorr charts/xplorr -n xplorr \
+            --set clusterName=ci \
+            --set xplorr.clusterId=11111111-1111-4111-8111-111111111111 \
+            --set xplorr.ingestToken=xpk8s_ci > /tmp/with.yaml
+          grep -q 'value: "http://opencost.xplorr.svc.cluster.local:9003"' /tmp/with.yaml
+          grep -q 'name: xplorr-cluster-id' /tmp/with.yaml
+
+      - name: Render, against an OpenCost we did not install
+        run: |
+          helm template xplorr charts/xplorr -n xplorr \
+            --set clusterName=ci \
+            --set xplorr.clusterId=11111111-1111-4111-8111-111111111111 \
+            --set xplorr.ingestToken=xpk8s_ci \
+            --set installOpenCost=false \
+            --set openCostUrl=http://opencost.opencost.svc.cluster.local:9003 > /tmp/without.yaml
+          grep -q 'value: "http://opencost.opencost.svc.cluster.local:9003"' /tmp/without.yaml
+          ! grep -q 'kind: Deployment' /tmp/without.yaml
+
+      # A missing value has to say what to do about it, since that message is
+      # the only thing standing between a customer and a wrong cluster id.
+      - name: Refuse an install that is missing something
+        run: |
+          for args in \
+            "--set clusterName=ci --set xplorr.clusterId=id" \
+            "--set clusterName=ci --set xplorr.ingestToken=xpk8s_ci" \
+            "--set xplorr.clusterId=id --set xplorr.ingestToken=xpk8s_ci" \
+            "--set clusterName=ci --set xplorr.clusterId=id --set xplorr.ingestToken=xpk8s_ci --set xplorr.existingSecret=s" \
+            "--set clusterName=ci --set xplorr.clusterId=id --set xplorr.ingestToken=xpk8s_ci --set installOpenCost=false"; do
+            if helm template xplorr charts/xplorr $args >/dev/null 2>&1; then
+              echo "expected a refusal for: $args"
+              exit 1
+            fi
+          done
+
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.19.0
+
+      - uses: helm/kind-action@v1.15.0
+
+      - run: helm repo add opencost https://opencost.github.io/opencost-helm-chart
+      - run: helm dependency update charts/xplorr
+
+      - name: Install
+        run: |
+          helm install xplorr charts/xplorr \
+            -n xplorr --create-namespace --wait --timeout 5m \
+            --set clusterName=kind-ci \
+            --set xplorr.clusterId=11111111-1111-4111-8111-111111111111 \
+            --set xplorr.ingestToken=xpk8s_ci
+
+      - name: The cluster name reached OpenCost
+        run: |
+          kubectl -n xplorr get configmap xplorr-cluster-id -o jsonpath='{.data.CLUSTER_ID}' | grep -qx kind-ci
+          kubectl -n xplorr get deploy opencost -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].valueFrom.configMapKeyRef.name}' | grep -qx xplorr-cluster-id
+
+      - name: The collector is scheduled and points at OpenCost
+        run: |
+          kubectl -n xplorr get cronjob xplorr-collector -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].env[?(@.name=="OPENCOST_URL")].value}' \
+            | grep -qx http://opencost.xplorr.svc.cluster.local:9003

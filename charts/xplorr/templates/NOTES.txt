@@ -1,0 +1,40 @@
+{{ .Values.clusterName }} is installed.
+
+The collector runs on the schedule {{ .Values.xplorr.schedule }} (UTC), so the
+first send is up to an hour away. Run it now instead:
+
+  kubectl -n {{ .Release.Namespace }} create job xplorr-first-run \
+    --from=cronjob/{{ include "xplorr.fullname" . }}-collector
+
+  kubectl -n {{ .Release.Namespace }} logs job/xplorr-first-run
+
+A run that worked ends with "sent to Xplorr". The console then moves this
+cluster from "Waiting for collector" to "Receiving", which can take a minute.
+
+{{ if .Values.installOpenCost -}}
+OpenCost was installed with this release, reporting as CLUSTER_ID
+"{{ .Values.clusterName }}". Check it is up before reading anything into an
+empty first run:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/opencost
+{{- else -}}
+OpenCost was not installed by this release. The collector reads
+{{ include "xplorr.openCostUrl" . }}, so a first run that finds nothing there
+will say so in its logs.
+{{- end }}
+
+{{ if .Values.xplorr.ingestToken -}}
+The ingest token is in this release's values, which means it is in Helm's
+release Secret and in whatever holds your values file. To keep it out of both,
+put it in a Secret under the key `token` and reinstall with
+--set xplorr.existingSecret=<name> instead.
+{{- end }}
+
+Cost is reported by namespace, controller, pod and label, with idle capacity
+kept separate. OpenCost prices at public on-demand rates until you give it
+your cloud pricing details, so reserved, savings plan and spot discounts will
+not show until you do:
+
+  https://www.opencost.io/docs/configuration/
+
+Docs: https://docs.xplorr.io/guides/connect-kubernetes/

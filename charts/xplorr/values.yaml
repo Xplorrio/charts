@@ -1,0 +1,85 @@
+# The name you want this cluster to appear under.
+#
+# It is also given to OpenCost as its CLUSTER_ID, through a ConfigMap this
+# chart creates, so the two can never disagree. Getting those out of step is
+# the single most common way a cluster ends up reporting cost under another
+# cluster's name.
+clusterName: ""
+
+xplorr:
+  # The cluster id from the Xplorr console: Kubernetes, your cluster,
+  # Collector. It is a UUID and is not the same thing as clusterName above.
+  clusterId: ""
+
+  # The ingest token, shown once when you generate it. It can write cost data
+  # for this one cluster and can do nothing else.
+  ingestToken: ""
+
+  # Instead of putting the token in values, point at a Secret you already
+  # manage, holding it under the key `token`. Set one or the other.
+  existingSecret: ""
+
+  # Where cost data is sent. The cluster id is appended to this.
+  ingestBaseUrl: "https://ingest.xplorr.io/api/v1/kubernetes/ingest"
+
+  # Set this only to send somewhere other than ingestBaseUrl/clusterId, such
+  # as a self-hosted Xplorr.
+  ingestUrl: ""
+
+  # How often the collector sends. Hourly, in UTC.
+  schedule: "0 * * * *"
+
+  # How far back each run sends. Re-sending the last few days lets a missed
+  # run heal itself; Xplorr replaces a day rather than adding to it, so this
+  # cannot double count.
+  window: "3d"
+
+  # A stock curl image, pinned rather than floating on :latest, so a rebuilt
+  # upstream image cannot change what runs in your cluster. There is no Xplorr
+  # binary in here to review.
+  image:
+    repository: curlimages/curl
+    tag: "8.22.0"
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Scheduling for the collector Job, if your nodes need it.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+# Install OpenCost as part of this release.
+#
+# Turn it off if you already run OpenCost, and set openCostUrl to its service.
+installOpenCost: true
+
+# Your existing OpenCost API, used only when installOpenCost is false.
+# For example: http://opencost.opencost.svc.cluster.local:9003
+openCostUrl: ""
+
+# Everything below is passed to the OpenCost chart unchanged, and only applies
+# when installOpenCost is true. Override anything the OpenCost chart supports.
+opencost:
+  # A fixed name, so the collector's address is the same in every cluster and
+  # this chart does not have to guess at what Helm derived from the release
+  # name. One OpenCost per namespace.
+  fullnameOverride: opencost
+  opencost:
+    exporter:
+      # Reads CLUSTER_ID from the ConfigMap this chart writes from clusterName.
+      clusterIdConfigmap: xplorr-cluster-id
+      collectorDataSource:
+        enabled: true
+    prometheus:
+      internal:
+        enabled: false
+    ui:
+      enabled: false

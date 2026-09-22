@@ -1,0 +1,139 @@
+{{- include "xplorr.validate" . -}}
+{{/*
+The collector.
+
+It curls the in-cluster OpenCost API and posts the response to Xplorr
+unchanged, so Xplorr runs one parser over push and pull alike. Nothing is
+exposed: no inbound access, no public endpoint, no cloud credentials, and no
+ServiceAccount token mounted.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "xplorr.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xplorr.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.xplorr.schedule | quote }}
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "xplorr.labels" . | nindent 12 }}
+          {{- with .Values.xplorr.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          {{- with .Values.xplorr.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.xplorr.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.xplorr.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: collector
+              image: "{{ .Values.xplorr.image.repository }}:{{ .Values.xplorr.image.tag }}"
+              imagePullPolicy: {{ .Values.xplorr.image.pullPolicy }}
+              env:
+                - name: OPENCOST_URL
+                  value: {{ include "xplorr.openCostUrl" . | quote }}
+                - name: XPLORR_INGEST_URL
+                  value: {{ include "xplorr.ingestUrl" . | quote }}
+                - name: COST_WINDOW
+                  value: {{ .Values.xplorr.window | quote }}
+                - name: XPLORR_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "xplorr.secretName" . }}
+                      key: token
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # Ask OpenCost for daily allocations over the window, idle kept separate.
+                  curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                    --get "$OPENCOST_URL/allocation" \
+                    --data-urlencode "window=$COST_WINDOW" \
+                    --data-urlencode "aggregate=namespace,controllerKind,controller,pod" \
+                    --data-urlencode "step=1d" \
+                    --data-urlencode "accumulate=false" \
+                    --data-urlencode "includeIdle=true" \
+                    --data-urlencode "shareIdle=false" \
+                    -o /tmp/allocations.json
+                  echo "collected $(wc -c < /tmp/allocations.json) bytes from OpenCost"
+                  # Send it on unchanged. The token never reaches stdout.
+                  curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                    -X POST "$XPLORR_INGEST_URL" \
+                    -H "Authorization: Bearer $XPLORR_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    --data-binary @/tmp/allocations.json
+                  echo ""
+                  echo "sent allocations to Xplorr"
+                  # Node assets, one day per request since the Assets API has no step.
+                  days="${COST_WINDOW%d}"
+                  now=$(date -u +%s)
+                  i=0
+                  while [ "$i" -lt "$days" ]; do
+                    start=$((now - now % 86400 - i * 86400))
+                    day=$(date -u -d "@$start" +%Y-%m-%d)
+                    if [ "$i" -eq 0 ]; then
+                      stop_at=$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ)
+                    else
+                      stop_at=$(date -u -d "@$((start + 86400))" +%Y-%m-%dT00:00:00Z)
+                    fi
+                    if curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                         --get "$OPENCOST_URL/assets" \
+                         --data-urlencode "window=${day}T00:00:00Z,${stop_at}" \
+                         -o /tmp/assets.json; then
+                      curl -sS --fail-with-body --max-time 120 --retry 3 --retry-delay 5 \
+                        -X POST "$XPLORR_INGEST_URL/assets?date=$day" \
+                        -H "Authorization: Bearer $XPLORR_TOKEN" \
+                        -H "Content-Type: application/json" \
+                        --data-binary @/tmp/assets.json || echo "node assets for $day were not accepted"
+                      echo ""
+                    else
+                      echo "OpenCost assets unavailable for $day, skipped"
+                    fi
+                    i=$((i + 1))
+                  done
+                  echo "sent to Xplorr"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                privileged: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                {{- toYaml .Values.xplorr.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi

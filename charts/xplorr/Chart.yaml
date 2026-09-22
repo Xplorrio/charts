@@ -1,0 +1,28 @@
+apiVersion: v2
+name: xplorr
+description: Sends Kubernetes cost data to Xplorr, installing OpenCost alongside it.
+type: application
+version: 0.0.1
+appVersion: "1.0.0"
+home: https://xplorr.io
+icon: https://xplorr.io/brand/xplorr-avatar-500.png
+sources:
+  - https://github.com/Xplorrio/charts
+keywords:
+  - cost
+  - finops
+  - opencost
+  - kubernetes
+maintainers:
+  - name: Xplorr
+    url: https://xplorr.io
+annotations:
+  artifacthub.io/license: Apache-2.0
+dependencies:
+  # Xplorr reads cluster cost from OpenCost and never replaces it. Installing
+  # it here is what turns onboarding from "install OpenCost, work out its
+  # CLUSTER_ID, then apply our YAML" into one command.
+  - name: opencost
+    version: 2.5.32
+    repository: https://opencost.github.io/opencost-helm-chart
+    condition: installOpenCost

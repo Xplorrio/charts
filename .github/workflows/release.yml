@@ -1,0 +1,50 @@
+name: Release chart
+
+# Publishes the chart to the Helm repository served from GitHub Pages, so that
+# `helm repo add xplorr https://xplorrio.github.io/charts` keeps working.
+#
+# chart-releaser only publishes a chart whose version in Chart.yaml is new, so
+# a commit that does not bump the version is a no-op rather than a failure.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+        with:
+          version: v3.19.0
+
+      # OpenCost is a dependency, so it has to be fetched before packaging or
+      # the published chart installs nothing but the collector.
+      - name: Fetch dependencies
+        run: |
+          helm repo add opencost https://opencost.github.io/opencost-helm-chart
+          helm dependency update charts/xplorr
+
+      - name: Configure the committer
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Release
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: charts
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

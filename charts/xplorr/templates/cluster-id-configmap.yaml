@@ -1,0 +1,21 @@
+{{- include "xplorr.validate" . -}}
+{{- if .Values.installOpenCost }}
+{{/*
+OpenCost's CLUSTER_ID, taken from the same clusterName the operator already
+gave this release.
+
+The OpenCost chart can read CLUSTER_ID from a ConfigMap instead of a value, so
+this is what stops the two names drifting apart. A cluster whose OpenCost still
+says `default-cluster`, because its values were copied from another cluster, is
+the most common way cost turns up labelled as somewhere else.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xplorr-cluster-id
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xplorr.labels" . | nindent 4 }}
+data:
+  CLUSTER_ID: {{ .Values.clusterName | quote }}
+{{- end }}
