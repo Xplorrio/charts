@@ -103,17 +103,39 @@ jobs:
       - name: That address actually serves OpenCost
         run: |
           kubectl -n xplorr get endpoints opencost -o jsonpath='{.subsets[*].addresses[*].ip}' | grep -q .
-          kubectl -n xplorr run probe --rm -i --restart=Never --image=curlimages/curl:8.22.0 -- \
+          # Created and waited for rather than run with `-i`: attaching to a
+          # pod's stream needs the pod to be running by the time kubectl
+          # attaches, and in CI the image pull makes that a race the test
+          # loses rather than the chart.
+          kubectl -n xplorr run probe --restart=Never --image=curlimages/curl:8.22.0 --command -- \
             curl -sS --fail --max-time 30 --retry 5 --retry-delay 5 --retry-connrefused \
             -o /dev/null http://opencost.xplorr.svc.cluster.local:9003/healthz
+          kubectl -n xplorr wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe --timeout=3m \
+            || { kubectl -n xplorr describe pod probe; kubectl -n xplorr logs probe; exit 1; }
 
       # The first run after an install races OpenCost coming up. It has to
       # wait rather than fail, because that is what a customer hits.
-      - name: A real collector run survives OpenCost still starting
+      #
+      # The job itself cannot succeed here: the token is fake, so Xplorr
+      # answers 401 and the collector exits non-zero. That is the wrong thing
+      # to assert on. What matters is the in-cluster half, which the log says
+      # outright: it waited for OpenCost, then read bytes from it.
+      - name: A real collector run reaches OpenCost
         run: |
           kubectl -n xplorr create job first-run --from=cronjob/xplorr-collector
-          kubectl -n xplorr wait --for=condition=complete --timeout=5m job/first-run \
-            || { kubectl -n xplorr logs job/first-run; exit 1; }
-          # It reaches Xplorr and is refused there (the token is fake), which
-          # is proof it got past OpenCost. A connection error would not be.
-          kubectl -n xplorr logs job/first-run | grep -q 'collected'
+          for i in $(seq 1 36); do
+            log=$(kubectl -n xplorr logs job/first-run 2>/dev/null || true)
+            case "$log" in *collected*) echo "$log"; exit 0;; esac
+            sleep 5
+          done
+          echo "the collector never read anything from OpenCost"
+          kubectl -n xplorr logs job/first-run || true
+          kubectl -n xplorr describe job/first-run || true
+          kubectl -n xplorr get pods -o wide
+          kubectl -n xplorr logs deploy/opencost --tail=50 || true
+          exit 1
+
+      # And that the wait is what made it possible, rather than luck.
+      - name: The run waited for OpenCost rather than assuming it
+        run: |
+          kubectl -n xplorr logs job/first-run | grep -q 'OpenCost is answering'
