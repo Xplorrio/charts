@@ -1,0 +1,5 @@
+# Nothing here belongs in the packaged chart a customer downloads.
+.DS_Store
+.git/
+.gitignore
+*.tgz

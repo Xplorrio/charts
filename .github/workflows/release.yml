@@ -5,6 +5,11 @@ name: Release chart
 #
 # chart-releaser only publishes a chart whose version in Chart.yaml is new, so
 # a commit that does not bump the version is a no-op rather than a failure.
+#
+# It decides that by diffing against the previous commit, which means the very
+# first commit in a repository releases nothing: there is nothing behind it to
+# diff against. The first release therefore needs a second commit touching
+# charts/, which is worth knowing before assuming the workflow is broken.
 
 on:
   push:
