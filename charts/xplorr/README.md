@@ -54,6 +54,25 @@ kubectl -n opencost get deploy opencost \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].value}'
 ```
 
+You do not have to know this up front. With `installOpenCost` left at its
+default of `true`, a real `helm install` or `helm upgrade` checks for a
+Service named `opencost` in `opencostDetectNamespaces` (`opencost`,
+`monitoring`, `kube-system` by default) before doing anything, and refuses
+the install if it finds one, naming the namespace and the exact flags above
+to rerun with. It does not reuse what it finds automatically: a same-named
+Service that is not actually your OpenCost would otherwise decide the
+collector's behaviour with nothing in a rendered manifest to show it, the
+same failure mode `clusterName` exists to prevent on the other side. Because
+the check needs a real cluster to look at, `helm template` and `--dry-run`
+never see it and always render as if nothing else is running; it only acts
+on a real install.
+
+The check is best effort. Helm's `lookup` returns nothing, rather than an
+error, when the identity running `helm install` cannot read Services in those
+namespaces, so an installer without that access gets a second OpenCost and
+no warning. If you install with a namespace-scoped account, check for an
+existing OpenCost yourself and set `installOpenCost=false` when there is one.
+
 ## Keeping the token out of values
 
 The token in `--set` ends up in Helm's release Secret. To avoid that, put it in
@@ -96,6 +115,7 @@ from **Waiting for collector** to **Receiving**.
 | `xplorr.image.tag` | `8.22.0` | The `curlimages/curl` tag. Pinned on purpose. |
 | `installOpenCost` | `true` | Set to `false` if you already run OpenCost. |
 | `openCostUrl` | | Your OpenCost API, required when `installOpenCost` is `false`. |
+| `opencostDetectNamespaces` | `[opencost, monitoring, kube-system]` | Namespaces a real install checks for an existing `opencost` Service before installing its own. Empty list skips the check. |
 | `opencost.*` | | Passed to the [OpenCost chart](https://github.com/opencost/opencost-helm-chart) unchanged. |
 
 ## About the numbers

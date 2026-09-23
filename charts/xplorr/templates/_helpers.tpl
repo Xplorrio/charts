@@ -71,6 +71,44 @@ at a namespace is how a collector ends up sending nothing with no error.
 {{- end -}}
 
 {{/*
+Refuses to install a second OpenCost over one that is already running.
+
+`lookup` only sees a live cluster: `helm template` and `--dry-run` get an
+empty result back and this check does not fire for them. That is deliberate,
+not a gap. Its job is to stop a real `helm install` from standing up a
+duplicate OpenCost, not to change what a preview shows, so a rendered
+manifest stays an honest preview of the chart rather than of the cluster it
+happens to run against.
+
+Reusing what `lookup` finds automatically was rejected: a Service that
+happens to be named opencost in a namespace this chart checks would then pick
+which OpenCost the collector reads, with nothing in a rendered manifest or a
+`helm diff` to show it. That is the CLUSTER_ID mistake again, one layer
+further down, and unlike CLUSTER_ID there would be no console field to catch
+it in later. Failing and naming the exact flags to rerun with keeps the
+decision with whoever is running the install, the same way a missing
+clusterId or ingestToken already does above, and costs one extra command
+against a real conflict, which is rare, rather than a silent wrong OpenCost
+against every install, which would not be.
+*/}}
+{{- define "xplorr.opencostConflictCheck" -}}
+{{- if .Values.installOpenCost -}}
+{{- $found := list -}}
+{{- range $ns := .Values.opencostDetectNamespaces -}}
+{{- if ne $ns $.Release.Namespace -}}
+{{- if lookup "v1" "Service" $ns "opencost" -}}
+{{- $found = append $found $ns -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $found -}}
+{{- $ns := first $found -}}
+{{- fail (printf "\n\nAn OpenCost Service already exists: %s (namespace %s).\n\ninstallOpenCost defaults to true, which would install a second one. Reuse the one that is already there instead:\n\n  --set installOpenCost=false --set openCostUrl=http://opencost.%s.svc.cluster.local:9003\n\nIf that Service is not actually OpenCost, rename it, or narrow opencostDetectNamespaces to skip it.\n" (join ", " $found) $ns $ns) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Everything the chart cannot run without, checked in one place so a missing
 value is one readable sentence rather than a template error forty lines down.
 */}}
@@ -87,4 +125,5 @@ value is one readable sentence rather than a template error forty lines down.
 {{- if not .Values.clusterName -}}
 {{- fail "\n\nclusterName is not set.\n\nIt is the name this cluster reports under, and it is given to OpenCost as its CLUSTER_ID. Install with --set clusterName=<name>.\n" -}}
 {{- end -}}
+{{- include "xplorr.opencostConflictCheck" . -}}
 {{- end -}}
