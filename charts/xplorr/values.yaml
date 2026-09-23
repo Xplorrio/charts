@@ -65,6 +65,18 @@ installOpenCost: true
 # For example: http://opencost.opencost.svc.cluster.local:9003
 openCostUrl: ""
 
+# Namespaces checked for a Service named opencost before this chart installs
+# its own, so a cluster that already runs one is not handed a second. Only
+# checked when installOpenCost is true, and only against a real install: a
+# `helm template` or `--dry-run` cannot see the cluster, so it never fires
+# there. Finding one refuses the install with the flags to set instead of
+# guessing; it never reuses what it finds. Add a namespace here for your own
+# convention, or clear the list to skip the check.
+opencostDetectNamespaces:
+  - opencost
+  - monitoring
+  - kube-system
+
 # Everything below is passed to the OpenCost chart unchanged, and only applies
 # when installOpenCost is true. Override anything the OpenCost chart supports.
 opencost:
