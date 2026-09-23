@@ -67,6 +67,12 @@ the check needs a real cluster to look at, `helm template` and `--dry-run`
 never see it and always render as if nothing else is running; it only acts
 on a real install.
 
+The check is best effort. Helm's `lookup` returns nothing, rather than an
+error, when the identity running `helm install` cannot read Services in those
+namespaces, so an installer without that access gets a second OpenCost and
+no warning. If you install with a namespace-scoped account, check for an
+existing OpenCost yourself and set `installOpenCost=false` when there is one.
+
 ## Keeping the token out of values
 
 The token in `--set` ends up in Helm's release Secret. To avoid that, put it in
