@@ -56,6 +56,24 @@ xplorr:
   affinity: {}
   podAnnotations: {}
 
+# Usage percentiles from your own Prometheus, for right sizing from P95
+# rather than from averages. Off by default: with url empty the collector
+# does exactly what it did before and never talks to Prometheus.
+prometheus:
+  # The in-cluster address of a Prometheus that scrapes cAdvisor (kubelet)
+  # and kube-state-metrics, for example
+  # http://prometheus-server.monitoring.svc.cluster.local:80 or
+  # http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  # The collector runs instant queries against /api/v1/query. It is read
+  # only and needs no credentials, so a Prometheus behind authentication is
+  # not supported yet.
+  url: ""
+
+  # Also read GPU utilisation and GPU memory from the NVIDIA DCGM exporter
+  # (DCGM_FI_DEV_GPU_UTIL, DCGM_FI_DEV_FB_USED) in the same Prometheus. Needs
+  # prometheus.url. Leave it off on clusters without NVIDIA GPUs.
+  dcgm: false
+
 # Install OpenCost as part of this release.
 #
 # Turn it off if you already run OpenCost, and set openCostUrl to its service.

@@ -89,6 +89,51 @@ helm upgrade --install xplorr xplorr/xplorr \
   --set xplorr.existingSecret=xplorr-ingest
 ```
 
+## Right sizing from P95, and GPU utilisation
+
+OpenCost reports average usage and one peak per day. That is enough to show
+a workload is over provisioned, not enough to size it well: an average hides
+the busy hour, and a single spike decides a peak. If the cluster already runs
+Prometheus with cAdvisor (kubelet) and kube-state-metrics, point the
+collector at it and Xplorr sizes requests from P95 instead:
+
+```bash
+helm upgrade --install xplorr xplorr/xplorr \
+  --namespace xplorr --create-namespace \
+  --set clusterName=prod-eks \
+  --set xplorr.clusterId=<cluster id> \
+  --set xplorr.ingestToken=<token> \
+  --set prometheus.url=http://prometheus-server.monitoring.svc.cluster.local:80
+```
+
+Each run then also asks Prometheus, for every day in `xplorr.window`, for
+per container P50, P95 and max of CPU and memory working set, sampled every
+5 minutes, plus requests, limits and pod owners, and posts the responses to
+Xplorr gzipped. Xplorr rolls pods up to their Deployment, StatefulSet,
+DaemonSet or Job and recommends:
+
+- CPU request: P95 plus 15%.
+- Memory request: the larger of P95 plus 20% and the highest usage seen, so a
+  recommendation never sets up an OOM kill.
+- Limits: 25% above the larger of the recommended request and the max seen.
+
+Recommendations based on fewer than 7 days, or on usage whose max is more
+than twice its P95, are flagged in the console.
+
+On clusters with NVIDIA GPUs and the
+[DCGM exporter](https://github.com/NVIDIA/dcgm-exporter) scraped by the same
+Prometheus, add `--set prometheus.dcgm=true` to send GPU utilisation and GPU
+memory per pod as well. Xplorr then shows GPU cost against utilisation and
+flags GPUs held by a workload that uses them less than 10% of the time. The
+exporter must attach pod labels to its series (its default Kubernetes
+mapping does; `exported_namespace` and `exported_pod` are read too).
+
+The queries, verbatim, are in
+[`templates/cronjob.yaml`](templates/cronjob.yaml). They are read only
+instant queries against `/api/v1/query`. With `prometheus.url` left empty,
+the default, the collector never contacts Prometheus and behaves exactly as
+before. A Prometheus behind authentication is not supported yet.
+
 ## First run
 
 The collector runs hourly. To see data now rather than within the hour:
@@ -113,6 +158,8 @@ from **Waiting for collector** to **Receiving**.
 | `xplorr.window` | `3d` | How far back each run sends. Re-sending replaces days rather than adding to them. |
 | `xplorr.ingestBaseUrl` | `https://ingest.xplorr.io/api/v1/kubernetes/ingest` | Where to send. Change it for a self-hosted Xplorr. |
 | `xplorr.image.tag` | `8.22.0` | The `curlimages/curl` tag. Pinned on purpose. |
+| `prometheus.url` | | In-cluster Prometheus to read usage percentiles from. Empty means the collector never contacts Prometheus. |
+| `prometheus.dcgm` | `false` | Also read GPU utilisation and memory from the NVIDIA DCGM exporter. Needs `prometheus.url`. |
 | `installOpenCost` | `true` | Set to `false` if you already run OpenCost. |
 | `openCostUrl` | | Your OpenCost API, required when `installOpenCost` is `false`. |
 | `opencostDetectNamespaces` | `[opencost, monitoring, kube-system]` | Namespaces a real install checks for an existing `opencost` Service before installing its own. Empty list skips the check. |
@@ -139,8 +186,9 @@ rather than showing an empty page.
 | `xplorr-collector` | a CronJob running `curlimages/curl`, pinned |
 
 The collector mounts no ServiceAccount token, runs as user 65534 with a
-read-only root filesystem, drops every capability, and its whole job is two
-curls: one to OpenCost, one to Xplorr. There is no Xplorr binary in it. Read
+read-only root filesystem, drops every capability, and its whole job is
+curls: to OpenCost, to Prometheus when `prometheus.url` is set, and to Xplorr.
+There is no Xplorr binary in it. Read
 [`charts/xplorr/templates/cronjob.yaml`](charts/xplorr/templates/cronjob.yaml).
 
 ## Docs
