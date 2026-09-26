@@ -38,4 +38,9 @@ not show until you do:
 
   https://www.opencost.io/docs/configuration/
 
+{{ if .Values.prometheus.url -}}
+Usage percentiles are read from {{ .Values.prometheus.url }}{{ if .Values.prometheus.dcgm }}, with GPU
+utilisation from the DCGM exporter{{ end }}. A run logs "collected ... bytes of
+usage" per day when Prometheus answered.
+{{ end }}
 Docs: https://docs.xplorr.io/guides/connect-kubernetes/

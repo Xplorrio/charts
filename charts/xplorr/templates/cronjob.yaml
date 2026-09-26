@@ -6,6 +6,14 @@ It curls the in-cluster OpenCost API and posts the response to Xplorr
 unchanged, so Xplorr runs one parser over push and pull alike. Nothing is
 exposed: no inbound access, no public endpoint, no cloud credentials, and no
 ServiceAccount token mounted.
+
+With prometheus.url set, it also runs a fixed set of instant PromQL queries
+per day and posts the raw Prometheus responses, gzipped, to the usage ingest
+path. The image has no jq, so nothing is parsed here: the payload is the
+responses joined into one JSON object by printf and cat, and Xplorr parses
+it. The query text below must match PROMQL in the Xplorr cloud-sync service
+(providers/kubernetes/prometheus.js); RANGE is replaced with the day's
+length in seconds.
 */}}
 apiVersion: batch/v1
 kind: CronJob
@@ -66,6 +74,12 @@ spec:
                   value: {{ include "xplorr.ingestUrl" . | quote }}
                 - name: COST_WINDOW
                   value: {{ .Values.xplorr.window | quote }}
+                {{- if .Values.prometheus.url }}
+                - name: PROMETHEUS_URL
+                  value: {{ trimSuffix "/" .Values.prometheus.url | quote }}
+                - name: PROMETHEUS_DCGM
+                  value: {{ ternary "true" "false" (.Values.prometheus.dcgm | default false) | quote }}
+                {{- end }}
                 - name: XPLORR_TOKEN
                   valueFrom:
                     secretKeyRef:
@@ -139,6 +153,73 @@ spec:
                     fi
                     i=$((i + 1))
                   done
+                  {{- if .Values.prometheus.url }}
+                  # Usage percentiles from Prometheus, one payload per day.
+                  # Best effort: a Prometheus that is down or missing a metric
+                  # never stops cost collection, and a failed query is sent as
+                  # null so Xplorr treats it as missing rather than zero.
+                  q() {
+                    expr=$(printf '%s' "$2" | sed "s/RANGE/${range}s/g")
+                    if curl -sS --fail --max-time 120 --retry 3 --retry-delay 5 --retry-connrefused                          --get "$PROMETHEUS_URL/api/v1/query"                          --data-urlencode "query=$expr"                          --data-urlencode "time=$eval_at"                          -o /tmp/q.json && [ "$(head -c 1 /tmp/q.json)" = "{" ]; then
+                      :
+                    else
+                      echo "Prometheus query $1 failed for $day"
+                      echo null > /tmp/q.json
+                    fi
+                    printf '%s"%s":' "$sep" "$1" >> /tmp/usage.json
+                    cat /tmp/q.json >> /tmp/usage.json
+                    sep=","
+                  }
+                  CPU='sum by (namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))'
+                  MEM='sum by (namespace, pod, container) (container_memory_working_set_bytes{container!="",container!="POD"})'
+                  DCGM_BY='namespace, pod, container, exported_namespace, exported_pod, exported_container'
+                  i=0
+                  while [ "$i" -lt "$days" ]; do
+                    start=$((now - now % 86400 - i * 86400))
+                    day=$(date -u -d "@$start" +%Y-%m-%d)
+                    eval_at=$((start + 86400))
+                    if [ "$eval_at" -gt "$now" ]; then eval_at=$now; fi
+                    range=$((eval_at - start))
+                    if [ "$range" -lt 3600 ]; then
+                      echo "usage for $day skipped, less than an hour of it so far"
+                      i=$((i + 1))
+                      continue
+                    fi
+                    printf '{"version":1,"date":"%s","results":{' "$day" > /tmp/usage.json
+                    sep=""
+                    q cpu_p50 "quantile_over_time(0.5, ($CPU)[RANGE:5m])"
+                    q cpu_p95 "quantile_over_time(0.95, ($CPU)[RANGE:5m])"
+                    q cpu_max "max_over_time(($CPU)[RANGE:5m])"
+                    q cpu_samples "count_over_time(($CPU)[RANGE:5m])"
+                    q mem_p50 "quantile_over_time(0.5, ($MEM)[RANGE:5m])"
+                    q mem_p95 "quantile_over_time(0.95, ($MEM)[RANGE:5m])"
+                    q mem_max "max_over_time(($MEM)[RANGE:5m])"
+                    q cpu_request 'max by (namespace, pod, container) (max_over_time(kube_pod_container_resource_requests{resource="cpu"}[RANGE]))'
+                    q cpu_limit 'max by (namespace, pod, container) (max_over_time(kube_pod_container_resource_limits{resource="cpu"}[RANGE]))'
+                    q mem_request 'max by (namespace, pod, container) (max_over_time(kube_pod_container_resource_requests{resource="memory"}[RANGE]))'
+                    q mem_limit 'max by (namespace, pod, container) (max_over_time(kube_pod_container_resource_limits{resource="memory"}[RANGE]))'
+                    q gpu_request 'max by (namespace, pod, container) (max_over_time(kube_pod_container_resource_requests{resource="nvidia_com_gpu"}[RANGE]))'
+                    q pod_owner 'max by (namespace, pod, owner_kind, owner_name) (max_over_time(kube_pod_owner[RANGE]))'
+                    q replicaset_owner 'max by (namespace, replicaset, owner_kind, owner_name) (max_over_time(kube_replicaset_owner[RANGE]))'
+                    if [ "$PROMETHEUS_DCGM" = "true" ]; then
+                      q gpu_util_avg "avg by ($DCGM_BY) (avg_over_time(DCGM_FI_DEV_GPU_UTIL[RANGE]))"
+                      q gpu_util_p95 "max by ($DCGM_BY) (quantile_over_time(0.95, DCGM_FI_DEV_GPU_UTIL[RANGE]))"
+                      q gpu_mem_used_p95 "sum by ($DCGM_BY) (quantile_over_time(0.95, DCGM_FI_DEV_FB_USED[RANGE]))"
+                    fi
+                    printf '}}' >> /tmp/usage.json
+                    gzip -c /tmp/usage.json > /tmp/usage.json.gz
+                    echo "collected $(wc -c < /tmp/usage.json) bytes of usage for $day from Prometheus"
+                    curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
+                      -X POST "$XPLORR_INGEST_URL/usage" \
+                      -H "Authorization: Bearer $XPLORR_TOKEN" \
+                      -H "Content-Type: application/json" \
+                      -H "Content-Encoding: gzip" \
+                      --data-binary @/tmp/usage.json.gz || echo "usage for $day was not accepted"
+                    echo ""
+                    i=$((i + 1))
+                  done
+                  rm -f /tmp/usage.json /tmp/usage.json.gz /tmp/q.json
+                  {{- end }}
                   echo "sent to Xplorr"
               securityContext:
                 allowPrivilegeEscalation: false

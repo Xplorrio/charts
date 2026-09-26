@@ -125,5 +125,11 @@ value is one readable sentence rather than a template error forty lines down.
 {{- if not .Values.clusterName -}}
 {{- fail "\n\nclusterName is not set.\n\nIt is the name this cluster reports under, and it is given to OpenCost as its CLUSTER_ID. Install with --set clusterName=<name>.\n" -}}
 {{- end -}}
+{{- if and .Values.prometheus.dcgm (not .Values.prometheus.url) -}}
+{{- fail "\n\nprometheus.dcgm is set but prometheus.url is not.\n\nGPU utilisation is read from the DCGM exporter through Prometheus. Set --set prometheus.url=<in-cluster Prometheus address> as well, or drop prometheus.dcgm.\n" -}}
+{{- end -}}
+{{- if and .Values.prometheus.url (not (regexMatch "^https?://[^\\s]+$" .Values.prometheus.url)) -}}
+{{- fail "\n\nprometheus.url must be an http or https address, for example http://prometheus-server.monitoring.svc.cluster.local:80\n" -}}
+{{- end -}}
 {{- include "xplorr.opencostConflictCheck" . -}}
 {{- end -}}
