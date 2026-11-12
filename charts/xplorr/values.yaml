@@ -59,6 +59,15 @@ xplorr:
 # Usage percentiles from your own Prometheus, for right sizing from P95
 # rather than from averages. Off by default: with url empty the collector
 # does exactly what it did before and never talks to Prometheus.
+# Also read what runs now from the Kubernetes API each hour: every node with
+# its creation time, instance type and pool, and pods as kubectl prints them
+# (name and status only, no labels, annotations or specs). Xplorr uses it for
+# node age and the count of pods running now. The collector gets its own
+# ServiceAccount that may only list nodes and pods. Set false to keep the
+# collector without any Kubernetes API access.
+clusterState:
+  enabled: true
+
 prometheus:
   # The in-cluster address of a Prometheus that scrapes cAdvisor (kubelet)
   # and kube-state-metrics, for example

@@ -158,6 +158,7 @@ from **Waiting for collector** to **Receiving**.
 | `xplorr.window` | `3d` | How far back each run sends. Re-sending replaces days rather than adding to them. |
 | `xplorr.ingestBaseUrl` | `https://ingest.xplorr.io/api/v1/kubernetes/ingest` | Where to send. Change it for a self-hosted Xplorr. |
 | `xplorr.image.tag` | `8.22.0` | The `curlimages/curl` tag. Pinned on purpose. |
+| `clusterState.enabled` | `true` | Each hour, also list nodes and pods from the Kubernetes API, for node age and pods running now. Pods travel as name and status only. `false` gives the collector no Kubernetes API access. |
 | `prometheus.url` | | In-cluster Prometheus to read usage percentiles from. Empty means the collector never contacts Prometheus. |
 | `prometheus.dcgm` | `false` | Also read GPU utilisation and memory from the NVIDIA DCGM exporter. Needs `prometheus.url`. |
 | `installOpenCost` | `true` | Set to `false` if you already run OpenCost. |
@@ -184,10 +185,13 @@ rather than showing an empty page.
 | `xplorr-cluster-id` | a ConfigMap holding `CLUSTER_ID`, read by OpenCost |
 | `xplorr-ingest-token` | a Secret holding the token, unless you brought your own |
 | `xplorr-collector` | a CronJob running `curlimages/curl`, pinned |
+| `xplorr-collector` | a ServiceAccount, ClusterRole and ClusterRoleBinding that may only `list` nodes and pods, when `clusterState.enabled` |
 
-The collector mounts no ServiceAccount token, runs as user 65534 with a
-read-only root filesystem, drops every capability, and its whole job is
-curls: to OpenCost, to Prometheus when `prometheus.url` is set, and to Xplorr.
+The collector runs as user 65534 with a read-only root filesystem, drops
+every capability, and its whole job is curls: to OpenCost, to the Kubernetes
+API for the node and pod lists when `clusterState.enabled` is on, to
+Prometheus when `prometheus.url` is set, and to Xplorr. With
+`clusterState.enabled: false` it mounts no ServiceAccount token at all.
 There is no Xplorr binary in it. Read
 [`charts/xplorr/templates/cronjob.yaml`](charts/xplorr/templates/cronjob.yaml).
 

@@ -4,8 +4,14 @@ The collector.
 
 It curls the in-cluster OpenCost API and posts the response to Xplorr
 unchanged, so Xplorr runs one parser over push and pull alike. Nothing is
-exposed: no inbound access, no public endpoint, no cloud credentials, and no
-ServiceAccount token mounted.
+exposed: no inbound access, no public endpoint and no cloud credentials.
+
+With clusterState.enabled (the default), it also lists nodes and pods from the
+Kubernetes API through its own ServiceAccount, which may only list nodes and
+pods, and posts the API server's Table answers to the state ingest path:
+nodes with their creation time and labels, pods as kubectl prints them (name
+and status, no labels, annotations or specs). Turned off, no ServiceAccount
+token is mounted, as before.
 
 With prometheus.url set, it also runs a fixed set of instant PromQL queries
 per day and posts the raw Prometheus responses, gzipped, to the usage ingest
@@ -43,7 +49,12 @@ spec:
           {{- end }}
         spec:
           restartPolicy: Never
+          {{- if .Values.clusterState.enabled }}
+          serviceAccountName: {{ include "xplorr.fullname" . }}-collector
+          automountServiceAccountToken: true
+          {{- else }}
           automountServiceAccountToken: false
+          {{- end }}
           securityContext:
             runAsNonRoot: true
             runAsUser: 65534
@@ -153,6 +164,45 @@ spec:
                     fi
                     i=$((i + 1))
                   done
+                  {{- if .Values.clusterState.enabled }}
+                  # What runs now, from the Kubernetes API: nodes with their
+                  # creation time and labels, and pods as kubectl prints them
+                  # (name and status only). Best effort: a list the API refuses
+                  # is left out, and never stops cost collection.
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+                  k8s_list() {
+                    curl -sS --fail --max-time 60 --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      -H "Accept: application/json;as=Table;v=v1;g=meta.k8s.io" \
+                      "$API/api/v1/$1" -o "$2"
+                  }
+                  printf '{"version":1' > /tmp/state.json
+                  parts=0
+                  if k8s_list "nodes?includeObject=Metadata" /tmp/k8s.json; then
+                    printf ',"nodes":' >> /tmp/state.json; cat /tmp/k8s.json >> /tmp/state.json; parts=$((parts + 1))
+                  else
+                    echo "could not list nodes, sent without them"
+                  fi
+                  if k8s_list "pods?includeObject=None" /tmp/k8s.json; then
+                    printf ',"pods":' >> /tmp/state.json; cat /tmp/k8s.json >> /tmp/state.json; parts=$((parts + 1))
+                  else
+                    echo "could not list pods, sent without them"
+                  fi
+                  printf '}' >> /tmp/state.json
+                  if [ "$parts" -gt 0 ]; then
+                    gzip -c /tmp/state.json > /tmp/state.json.gz
+                    curl -sS --fail-with-body --max-time 120 --retry 5 --retry-delay 5 --retry-connrefused \
+                      -X POST "$XPLORR_INGEST_URL/state" \
+                      -H "Authorization: Bearer $XPLORR_TOKEN" \
+                      -H "Content-Type: application/json" \
+                      -H "Content-Encoding: gzip" \
+                      --data-binary @/tmp/state.json.gz || echo "cluster state was not accepted"
+                    echo ""
+                    echo "sent cluster state to Xplorr"
+                  fi
+                  rm -f /tmp/state.json /tmp/state.json.gz /tmp/k8s.json
+                  {{- end }}
                   {{- if .Values.prometheus.url }}
                   # Usage percentiles from Prometheus, one payload per day.
                   # Best effort: a Prometheus that is down or missing a metric
