@@ -1,0 +1,40 @@
+{{- if .Values.clusterState.enabled }}
+{{/*
+The collector's own identity, for its read of what runs now: list nodes and
+pods, nothing else. No get, no watch, no Secrets, no write of any kind.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "xplorr.fullname" . }}-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "xplorr.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "xplorr.fullname" . }}-collector
+  labels:
+    {{- include "xplorr.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "xplorr.fullname" . }}-collector
+  labels:
+    {{- include "xplorr.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "xplorr.fullname" . }}-collector
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "xplorr.fullname" . }}-collector
+    namespace: {{ .Release.Namespace }}
+{{- end }}

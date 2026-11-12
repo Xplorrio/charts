@@ -49,6 +49,22 @@ jobs:
           grep -q 'value: "http://opencost.opencost.svc.cluster.local:9003"' /tmp/without.yaml
           ! grep -q 'kind: Deployment' /tmp/without.yaml
 
+      # On by default: the collector lists nodes and pods through its own
+      # ServiceAccount, which may only list them. Off, it has no API access.
+      - name: Render, cluster state on and off
+        run: |
+          grep -qF 'POST "$XPLORR_INGEST_URL/state"' /tmp/with.yaml
+          grep -q 'serviceAccountName: xplorr-collector' /tmp/with.yaml
+          awk '/^kind: ClusterRole$/{f=1} f&&/^---/{f=0} f' /tmp/with.yaml | grep -F -A1 'resources: ["nodes", "pods"]' | grep -qF 'verbs: ["list"]'
+          helm template xplorr charts/xplorr -n xplorr \
+            --set clusterName=ci \
+            --set xplorr.clusterId=11111111-1111-4111-8111-111111111111 \
+            --set xplorr.ingestToken=xpk8s_ci \
+            --set clusterState.enabled=false > /tmp/nostate.yaml
+          ! grep -q 'INGEST_URL/state' /tmp/nostate.yaml
+          ! grep -q 'serviceAccountName: xplorr-collector' /tmp/nostate.yaml
+          grep -q 'automountServiceAccountToken: false' /tmp/nostate.yaml
+
       # Off by default: without prometheus.url the collector must not know
       # Prometheus exists, so an upgrade changes nothing for existing installs.
       - name: Render, without Prometheus
